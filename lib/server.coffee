@@ -921,7 +921,36 @@ module.exports = browserChannel = (options, onConnect) ->
   # - Handle the request, sending data back to the server via the response
   # - Call `next()`, which allows the next middleware in the stack a chance to
   #   handle the request.
+  defer = Q.defer();
+  
   middleware = (req, res, next) ->
+    that = this
+    
+    blackbox_params =
+      method: 'sessionid'
+      host: (req.headers.host.split ":")[0]
+      userip: req.headers['X-Forwarded-For'] || req.connection.remoteAddress
+      sessionid: (/Session_id=(.*)[;$]/.exec req['headers']['cookie'])[1]
+      format: 'json'
+
+    blackbox_url = 'http://blackbox.yandex-team.ru/blackbox?' + querystring.stringify blackbox_params
+
+    http.get blackbox_url, (bb_res) ->
+      bb_data = ''
+      bb_res.on 'data', (chunk) ->
+        bb_data += chunk.toString()
+      bb_res.on 'end', () ->
+        bb_json = JSON.parse(bb_data)
+        if bb_json.status.value != 'VALID'
+          res.writeHead 403, 'FORBIDDEN',
+            'Content-Type': 'text/plain',
+          res.end "Not authenticated"
+
+        uid = bb_json.uid.value
+        console.log 'UID', uid  
+        defer.resolve(that);
+    
+    
     {query, pathname} = parse req.url, true
     #console.warn req.method, req.url
     
@@ -1127,7 +1156,9 @@ module.exports = browserChannel = (options, onConnect) ->
   # a close listener for you automatically.
   options.server?.on 'close', middleware.close
 
-  middleware
+  #middleware
+  
+  defer.promise
 
 # This will override the timer methods (`setInterval`, etc) with the testing
 # stub versions, which are way faster.
